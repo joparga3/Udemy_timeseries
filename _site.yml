@@ -1,0 +1,7 @@
+name: "Timeseries"
+navbar:
+  title: "Timeseries"
+  left:
+    - text: "Timeseries"
+      href: index.html
+

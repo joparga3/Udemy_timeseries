@@ -1,0 +1,489 @@
+---
+title: "Timeseries"
+author: "Jose Parreno Garcia"
+date: "February 2018"
+output: 
+  html_document:
+    toc: true # table of content true
+    depth: 6  # upto three depths of headings (specified by #, ##, ###, ####)
+    number_sections: true  ## if you want number sections at each table header
+    #theme: spacelab  # many options for theme, this one is my favorite.
+    #highlight: tango  # specifies the syntax highlighting style
+    keep_md: true
+---
+<style>
+body {
+text-align: justify}
+
+</style>
+
+<br>
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 250)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source_path = getwd()
+```
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(knitr)
+```
+
+Time series analysis and forecasting form an important part of many business domains, for example, trying to forecast demand vs sales.
+
+* Understanding the components of a time series and xts package
+* Stationarity, de-tren and de-seasonalize
+* Lags, ACF, PACF, CCF
+* Moving average and exponential smoothing
+* Double exponential smoothing and Holt Winters
+* ARIMA Modelling
+
+<br>
+
+# Understanding the components of a time series and xts package
+
+## What is time series and how R handles it
+
+A time series is any metric measured over regular time intervals. Common examples are the stock market indices, temperature measures on daily basis, etc.
+
+R has its own way of dealing with time series objects, so let's first understand how to convert a numeric vector into a timeseries object.
+
+
+```{r fig.width=7, fig.height=7}
+# Create a simple numeric vector
+set.seed(100)
+vec = round(runif(100,1,10),2)
+vec
+
+# Quarterly data - frequency 4
+q_ts = ts(vec, frequency = 4, start = c(1959, 2))
+q_ts
+
+# Monthly data
+m_ts = ts(vec, frequency = 12, start = 1990)
+m_ts
+
+# Yearly data
+y_ts = ts(vec, frequency = 1, start = 2009)
+y_ts
+```
+
+## Daily time series using xts
+
+When it comes to computing daily time series, it is preferable to use the xts package (extended time series package). Let's compare how data is handled with ts() and xts().
+
+* With the ts() function, the plots are not really clear
+* With xts this becomes much more clear
+
+```{r fig.width=7, fig.height=7}
+# With a ts object
+d_ts = ts(vec, start = c(2009, 10), frequency = 365.25)
+d_ts
+plot(d_ts)
+
+# With xts object
+library(xts)
+d_xts = xts(vec, as.Date("2009-10-01")+0:99)
+d_xts
+plot(d_xts)
+```
+
+## Multi-time series using xts
+
+You can also work with multiseries using the xts package
+
+```{r fig.width=7, fig.height=7}
+# Crate the 2 time series objects
+set.seed(100)
+vec1 = sample(1:100)
+vec2 = round(vec1 + runif(100,10,20))
+
+# Create a sequence of dates
+library(lubridate)
+dates = seq.Date(ymd("2009-10-01"), length.out = 100, by = "day")
+
+# Create a df
+df = data.frame(vec1, vec2)
+rownames(df) = as.character(dates)
+df
+df_xts = as.xts(df)
+plot(df_xts$vec1, main = "Plot from XTS obj")
+lines(df_xts$vec2)
+```
+
+## Filtering dates using xts
+
+```{r fig.width=7, fig.height=7}
+# Get all data for 2009 --> using head to show only first 5 rows
+head(df_xts["2009"])
+
+# Get all data from 2009-10 to end --> using head to show only first 5 rows
+head(df_xts["2009-10/"])
+
+# Get all data till start to 2009-10 --> using head to show only first 5 rows
+head(df_xts["/2009-10"])
+
+# for stock prices 
+to.monthly(df_xts)
+to.weekly(df_xts)
+to.quarterly(df_xts)
+to.yearly(df_xts)
+
+```
+
+## Decomposing the timeseries object
+
+```{r fig.width=7, fig.height=7}
+decomposedRes = decompose(m_ts, type = "mult")
+plot(decomposedRes)
+
+# The components shown in the graph can be extract using the stl() function
+stlRes = stl(m_ts, s.window = "periodic", robust = T)
+head(stlRes)
+head(stlRes$time.series)
+
+```
+
+## Additive vs Multiplicative timeseries
+
+* You can see that additive is the sum of seasonality, trend and remainder
+* Whilst multiplicative is the product.
+
+```{r echo=FALSE, fig.width=3, fig.height=3}
+include_graphics(paste0(source_path,"/images/1.PNG"))
+```
+
+<br>
+
+# Stationarity, de-trending and de-seasonalize
+
+In the previous section, we introduced timeseries, how R handles this and the xts package. In this section we will dig a bit deeper into concepts of timeseries like:
+
+* Stationarity vs non-stationarity
+* De-trending time series
+* De-seasonalizing time series  
+
+## Stationarity vs non-stationarity
+
+* Stationary time series is one whose statistical characteristics do not change over time. Particularly, the mean value of the time series is pretty much constant over time, the variance does not increase over time and the seasonality effect is minimal.
+* Non-stationary time series is obviously the opposite :)
+* We can check for stationarity in R using the Augmented Dickey Fuller Test (ADF test)
+
+```{r echo=FALSE, fig.width=3, fig.height=3}
+include_graphics(paste0(source_path,"/images/2.PNG"))
+```
+
+```{r fig.width=7, fig.height=7}
+library(tseries)
+
+# Data -> random noise
+set.seed((100))
+x = runif(1000)
+adf.test(x)
+plot(x)
+
+## Since the p-value is less than 0.05, we reject the null hypothesis, therefore we can accept the alterntive hypothesis (stationary dataset)
+
+# Data -> non stationary
+adf.test(JohnsonJohnson)
+plot(JohnsonJohnson)
+
+## Clearly, now the p-value is much higher than the assumed 0.05 p-value, therefore we cannot reject the null hypothesis, which means that the JohnsonJohnson dataset is being tagged as a non-stationary time series dataset.
+```
+
+## Stationarising a time-series
+
+Stationarising a time series is important for ARIMA modelling (which we will discuss later). How do we do this in R?
+
+* A common approach is to substract successive observations - also called differencing
+* In the forecast package, we can calculate the number of differencing needed to make it stationary
+* The actual difference can be done using the div() function
+* Ideally, before differencing, we should determine if any seasonal differencing is needed using the nsdifs() function
+* Instead of substracting succesive observations, we subtract observations that are separated by the frequency of the time series
+* If required, seasonal difference can be done by setting the lag option in the div function
+
+```{r fig.width=7, fig.height=7}
+library(forecast)
+## You can see that there is a lot of seasonality in this dataset. There is periodic increase, decrease in the trend
+x = AirPassengers
+plot(x)
+
+## Let's see what happens when we de-seasonalize
+# Seasonal differencing
+ns = nsdiffs(x)
+ns ## --> it says that 1 seasonal diff is required
+
+if(ns > 0){de_seas = diff(x , lag = frequency(x), differences = ns)
+}else{de_seas = x}
+
+plot(de_seas)
+
+## Now lets do regular differencing to the de_seas dataset to make it stationary!
+n = ndiffs(de_seas)
+if(n > 0){differenced = diff(de_seas, differences = n)}
+
+plot(differenced)
+```
+
+## De-seasonalising a time-series whilst not affecting the trend
+
+This can be done by removing the seasonal component after decomposing a time series.
+
+```{r fig.width=7, fig.height=7}
+# Decompose the timeseries
+ts.stl = stl(AirPassengers, "periodic")
+
+# Substract the trend part
+de_seas = AirPassengers - ts.stl$time.series[,1]
+plot(de_seas, type = 'l', main = "De-Seasonalise")
+
+de_trend = AirPassengers - ts.stl$time.series[,2]
+plot(de_trend, type = 'l', main = "De-Trend")
+```
+
+<br>
+
+
+# Lags, ACF, PACF, CCF
+
+In this section we will see:
+
+* Lags and how to create them
+* Autocorrelation
+* Partial autocorrelation
+* Cross correlation
+
+## Lags and how to create them
+
+A lag of a timeseries is one where the data points are pushed forward by n units of time. 
+
+```{r fig.width=7, fig.height=7}
+AirPassengers
+
+# Create a lead - push the data 1 month backwards
+ap_lead1 = dplyr::lead(AirPassengers, n = 1)
+ap_lead1
+
+# Create a lag - push the data 1 month forward
+ap_lag1 = stats::lag(AirPassengers, n = 1)
+ap_lag1
+```
+
+Why are lags important? They are important because for most time series, the current observation can be dependant on the previous few observations, in other words, the timeseries can be dependent on its own lags. Therefore the lags can be used to predict the current and future values. But how many lags is the timeseries dependent on? This is where auto-correlation fits in.
+
+## Autocorrelation
+
+Autocorrelation is nothing but the correlation of the timeseries with lags of itself, in other words, it is a way of finding out hoy many past data points is the current data point dependent on. We can use the Acf() function to understand this. Check the graph below
+
+* Vertical lines show the correlation of the respective lags with the original time series.
+* For example, the line at 6 is the correlation of the 6th lag against the original time series.
+* Top half of the chart is positive correlation and bottom half is negative.
+* If a vertical line crosses the dashed blue line, that lag is significantly correlated with the original time series.
+* In this case, there is significant autocorrelation for all!
+
+```{r fig.width=7, fig.height=7}
+# Calculating ACF
+acfRes = Acf(AirPassengers)
+```
+
+If we repeated this with a stationary timeseries dataset:
+
+```{r fig.width=7, fig.height=7}
+# data
+set.seed(100)
+x = runif(100)
+
+# Calculating ACF
+acfRes = Acf(x)
+```
+
+## Partial autocorrelation
+
+Partial autocorrelation is similar to ACF, but with the linear dependences of all the lags between them removed.
+
+* Unlike ACF, the vertical lines fall very quick and not many lags are not correlated with the original time seris
+
+```{r fig.width=7, fig.height=7}
+# Calculating ACF
+pacfRes = Pacf(AirPassengers)
+```
+
+## Cross correlation
+
+A cross correlation is applying ACF to 2 different timeseries and comparing them
+
+```{r fig.width=7, fig.height=7}
+# Calculating ACF
+ccfRes = ccf(mdeaths, fdeaths, ylab = "cross-correlation")
+```
+
+<br>
+
+# Forecasting with moving average 
+
+The idea of using a moving average instead of the average of the whole series, is that we can start investigating trends with fixed ranges of time. For example, if we are interested in the whole dataset, the moving average can be set to get the whole date range and we will get a flat line or single value for the average. If we start narrowing the date ranges, for example to only 3 days, then the average will be moving along the time series using values for 3 days, making it much more dynamic and variable.
+
+```{r fig.width=7, fig.height=7}
+library(forecast)
+out = ma(AirPassengers, 5)
+plot(AirPassengers)
+lines(out, col = "red")
+```
+
+<br>
+
+# Forecasting with exponential smoothing
+
+Exponential smoothing effectively takes all data points into consideration when computing the forecast, but it gives exponentially decreasing weights to earlier (older) data points. Based on a given $\alpha$ parameter, it weighs between the actuals and estimated values of the previous observation to try to get a correct forecast.
+
+```{r echo=FALSE, fig.width=3, fig.height=3}
+include_graphics(paste0(source_path,"/images/3.PNG"))
+```
+
+```{r fig.width=7, fig.height=7}
+# Explicitly assigning the alpha value, and forecasting 2 records
+out = ses(AirPassengers, initial = "simple", alpha = 0.3, h = 2)
+out
+
+# Explicitly assigning the alpha value, and forecasting 2 records
+out1 = ses(AirPassengers, initial = "simple", alpha = 0.5, h = 2)
+
+# Plotting actuals and the previous 2 forecasts
+plot(window(AirPassengers, start = 1956), xlim = c(1956, 1962), main = "AirPassengers", type = "o")
+lines(out$mean, col = "red", type = "o")
+lines(out1$mean, col = "blue", type = "o")
+```
+
+<br>
+
+# Forecasting with Double Exponential (or simple Holt)
+
+For time series that contain trend and seasonality, the previous methods don't work that well and we need methods that take them into consideration as well (double exponential and holt winters).
+
+* Exponential smoothing does not excel when there is a trend in the data.
+* This can be improved by introducing a trend factor, so that the forecast is the sum of trend and the basic level components
+
+```{r echo=FALSE, fig.width=3, fig.height=3}
+include_graphics(paste0(source_path,"/images/4.PNG"))
+```
+
+When implementing in R we can use the **holt()** function. You can see that the summary shows the $\alpha$ and $\beta$ coefficients used in the above formula, and the error metrics on the used data.
+
+```{r fig.width=7, fig.height=7}
+library(forecast)
+data("ausair", package = "fpp")
+
+# Double exponential smoothing or just holt
+hfit1 = holt(ausair, initial = "simple")
+summary(hfit1)
+
+# Set an exponential trend to make it steeper
+hfit2 = holt(ausair, initial = "simple", exponential = T)
+summary(hfit2)
+
+# Add damping factor
+hfit3 = holt(ausair, damped = T)
+summary(hfit3)
+
+# Plotting the 3 methods above
+plot(ausair, main = "Air Passengers - Australia", type = "o", xlim = c(1970, 2019), ylim = c(0,70))
+lines(fitted(hfit1), col = "red", lty = 2)
+lines(fitted(hfit2), col = "green", lty = 2)
+lines(fitted(hfit3), col = "blue", lty = 2)
+lines(hfit1$mean, col = "red", type = "o")
+lines(hfit2$mean, col = "green", type = "o")
+lines(hfit3$mean, col = "blue", type = "o")
+
+```
+
+<br>
+
+# Forecasting with Triple exponential smoothing (Holt Winters method)
+
+Just like the double exponential method introduced the trend component, Holt Winters (triple exponential smoothing) adds also a seasonal component.
+
+```{r echo=FALSE, fig.width=3, fig.height=3}
+include_graphics(paste0(source_path,"/images/5.PNG"))
+```
+
+Holt Winters can be calculated using the **hw()** function.
+
+```{r fig.width=7, fig.height=7}
+# method 1
+hw_fit1 = hw(JohnsonJohnson, seasona = "additive")
+summary(hw_fit1)
+
+# method 2
+hw_fit2 = hw(JohnsonJohnson, seasona = "multiplicative")
+summary(hw_fit2)
+
+# plotting both methods
+plot(JohnsonJohnson, type = "o", xlim = c(1960, 1983), ylim = c(0, 20), main = "JohnsonJohnson")
+lines(fitted(hw_fit1), col ="blue", lty = 2)
+lines(fitted(hw_fit2), col ="red", lty = 2)
+lines(hw_fit1$mean, col ="blue", type = "o")
+lines(hw_fit2$mean, col ="red", type = "o")
+```
+
+<br>
+
+# ARIMA Modelling
+
+In this section, we are going to explore even more advanced methods for forecasting than the previous ones, as these new methods also use regression methods under the hood. The family of some of these methods is ARIMA.
+
+```{r echo=FALSE, fig.width=3, fig.height=3}
+include_graphics(paste0(source_path,"/images/6.PNG"))
+```
+
+Lets see how the (p), (d) and (q) are determined:
+
+* The first requirement for ARIMA modelling is to have a time series that is adequetly stationarised
+* The (d) represents the number of non-seasonal differencing required to make it stationary
+* (p) is the number of lags (or autoregressive terms) of the different series
+* (q) is the number of moving average terms
+* An ARMA model is like a regression equation, where the time series is modelled as a linear function, of its past values or lags
+* We have the AR working with order p
+* We have the MA working with order q
+* It is generally recommended to keep p and q lower or equal to 2
+* A good model will have the final error looking like white noise
+* What happens with the d? Well, unless we have an automatic way of checking multiple d, we will have to manually to this to many time series
+
+```{r echo=FALSE, fig.width=3, fig.height=3}
+include_graphics(paste0(source_path,"/images/7.PNG"))
+```
+
+## Auto-ARIMA
+
+* You can implement auto ARIMA with the **auto.arima()** function in R.
+* You can see how the function has returned an ARIMA model of order (0,1,1) -> p = 0, d = 1, q = 1
+* The second part of the ARIMA represents the seasonal part
+* The [4] denotes the number of periods per cycle
+
+```{r fig.width=7, fig.height=7}
+# Prepare the data
+train = window(JohnsonJohnson, start = c(1960), end = c(1975))
+test = window(JohnsonJohnson, start = c(1976), end = c(1980))
+
+# Auto ARIMA
+fit = auto.arima(train)
+fit
+
+# Forecast the model
+predicted = forecast(fit, h = 20)$mean
+accuracy(predicted, test)
+```
+
+## Adding external regressors to auto-ARIMA
+
+```{r fig.width=7, fig.height=7}
+# Auto-ARIMA with external regressors
+fit = auto.arima(train, xreg = fourier(train, 2))
+predicted = forecast(fit, h = 20, xreg = fourier(train, 2, 20))$mean
+accuracy(predicted, test)
+```
+
+
+
